@@ -1,0 +1,19 @@
+{
+  "mqtt": {
+    "broker": "broker.hivemq.com",
+    "port": 1883,
+    "keepalive": 15,
+    "qos": 1,
+    "topics": { "data": "group_1/temp", "status": "group_1/status" }
+  },
+  "publish": {
+    "interval": 2,
+    "miss_rate": 0.02,
+    "blackout": { "chance": 0.02, "min": 3, "max": 8 }
+  },
+  "devices": {
+    "dev001": "Library",
+    "dev002": "Engineering Lab",
+    "dev003": "Student Cafeteria"
+  }
+}
