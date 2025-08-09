@@ -29,7 +29,8 @@ Runs **all 3 devices** at once in separate threads.
 
 - **Start Publishing** – begin sending temperature data to the broker.
 - **Stop Publishing** – pause data sends (simulates no data feed for an extended period).
-- **Go Offline** – disconnect from broker (simulates network drop; triggers LWT OFFLINE message).
+- **Go Offline** – disconnect from broker manually
+- **Reconnect** – reconnect to broker
 - **Enable Wild Data** – send out-of-range values (<0 or >50).
 - **Enable Corrupt Data** – send malformed/bad data for error handling tests.
 - **Adjust Amplitude / Frequency / Noise** – tweak the data generator parameters.
