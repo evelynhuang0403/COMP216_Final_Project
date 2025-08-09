@@ -21,7 +21,7 @@ python group_1_publisher.py dev001
 ```bash
 python group_1_run_multi_publishers.py
 ```
-Runs group_1_run_multi_publishers.py - **all 3 devices** at once in separate threads.
+Runs **all 3 devices** at once in separate threads.
 
 ---
 
