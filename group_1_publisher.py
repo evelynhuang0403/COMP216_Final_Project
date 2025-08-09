@@ -111,7 +111,6 @@ class TemperaturePublisher:
             pass
 
     # ----------------------- MQTT setup & callbacks ---------------------
-
     # create and configure MQTT client
     def setup_client(self):
         self.client = mqtt.Client(
@@ -203,6 +202,7 @@ class TemperaturePublisher:
             t.daemon = True
             t.start()
 
+    # ------------------------ Start/Stop -------------------------
     # start publishing loop
     def start_publishing(self):
         if not self.connected and not self.manual_offline:
@@ -236,6 +236,7 @@ class TemperaturePublisher:
         self.stop_btn.config(state=DISABLED)
         self.ui_status("Status: Stopped")
 
+    # ----------------------- Publish loop with blackout bursts -----------------------
     # main loop: send messages, handle misses and blackouts
     def publish_loop(self):
         while self.running:
@@ -291,6 +292,8 @@ class TemperaturePublisher:
         self.blackout_remaining = random.randint(self.blackout_min, self.blackout_max)
         print(f"[{self.device_id}] Starting blackout for {self.blackout_remaining} sends.")
 
+
+    # ---------------------- Maintenance mode --------------------
     # go offline manually (no auto-reconnect)
     def go_offline(self):
         self.block_publishing = True
@@ -348,6 +351,7 @@ class TemperaturePublisher:
                 t.daemon = True
                 t.start()
 
+    # ----------------------- Cleanup -----------------------
     # clean shutdown
     def on_closing(self):
         self.stop_publishing()
