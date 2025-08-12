@@ -2,12 +2,13 @@ import json
 import time
 import threading
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
-from tkinter import *
+from tkinter import Tk, Frame, Label, Button, StringVar, BooleanVar, BOTH, X, Y, LEFT, RIGHT, END, DISABLED, NORMAL, WORD, VERTICAL
 from tkinter import ttk, scrolledtext
 import paho.mqtt.client as mqtt
+from typing import Optional, Dict, Any
 
 
 def load_config(path="group_1_config.json"):
@@ -79,18 +80,18 @@ class TemperatureSubscriber:
         self.master.title("Group 1 - IoT Subscriber Monitor")
         self.master.geometry("900x700")
         
-        self.client = None
+        self.client: Optional[mqtt.Client] = None
         self.connected = False
         self.running = False
         
         # Device monitoring state
-        self.device_states = {}  # device_id -> {last_data_time, status, location, last_value}
+        self.device_states: Dict[str, Dict[str, Any]] = {}  # device_id -> {last_data_time, status, location, last_value}
         self.data_timeout_timer = None
         
         # UI variables
         self.status_text = StringVar(value="Status: Disconnected")
-        self.devices_tree = None
-        self.log_text = None
+        self.devices_tree: Optional[ttk.Treeview] = None
+        self.log_text: Optional[scrolledtext.ScrolledText] = None
         
         # Connection status variables
         self.broker_info = StringVar(value=f"Broker: {BROKER}:{PORT}")
@@ -119,7 +120,7 @@ class TemperatureSubscriber:
         
         try:
             # Create message
-            msg = MimeMultipart()
+            msg = MIMEMultipart()
             msg['From'] = EMAIL_CONFIG["sender_email"]
             msg['To'] = EMAIL_CONFIG["recipient_email"]
             msg['Subject'] = f"IoT Alert: {subject}"
@@ -142,7 +143,7 @@ Please investigate the issue promptly.
 Group 1 IoT Subscriber Monitor
             """
             
-            msg.attach(MimeText(body, 'plain'))
+            msg.attach(MIMEText(body, 'plain'))
             
             # Send email
             server = smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"])
@@ -283,11 +284,19 @@ Group 1 IoT Subscriber Monitor
             pass
     
     def setup_client(self):
-        self.client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2,
-            client_id="group1_subscriber",
-            protocol=mqtt.MQTTv5
-        )
+        try:
+            # Try VERSION2 (newer paho-mqtt)
+            self.client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2,
+                client_id="group1_subscriber",
+                protocol=mqtt.MQTTv5
+            )
+        except AttributeError:
+            # Fallback for older paho-mqtt versions
+            self.client = mqtt.Client(
+                client_id="group1_subscriber",
+                protocol=mqtt.MQTTv5
+            )
         
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect

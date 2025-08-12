@@ -1,4 +1,4 @@
-from tkinter import *
+from tkinter import Frame, Label, Button, StringVar, BooleanVar, DoubleVar, BOTH, X, Y, LEFT, RIGHT, END, DISABLED, NORMAL
 from tkinter import ttk
 
 def setup_style():

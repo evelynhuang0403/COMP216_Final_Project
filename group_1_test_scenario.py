@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 import threading
-from tkinter import *
+from tkinter import Tk, Frame, Label, Button, StringVar, BooleanVar, BOTH, X, Y, LEFT, RIGHT, END, DISABLED, NORMAL
 from tkinter import messagebox
 
 class TestScenarioController:
