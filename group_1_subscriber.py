@@ -1,6 +1,9 @@
 import json
 import time
 import threading
+import smtplib
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
 from datetime import datetime, timedelta
 from tkinter import *
 from tkinter import ttk, scrolledtext
@@ -32,12 +35,49 @@ NO_DATA_TIMEOUT = 10  # seconds to detect no data feed
 NORMAL_TEMP_MIN = 18.0
 NORMAL_TEMP_MAX = 28.0
 
+# Email configuration
+EMAIL_CONFIG = {
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender_email": "iot.monitor@example.com",
+    "sender_password": "your_app_password",
+    "recipient_email": "admin@example.com",
+    "enabled": False  # Set to True to enable email notifications
+}
+
+
+def setup_style():
+    style = ttk.Style()
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+
+    # Fonts & paddings
+    style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"))
+    style.configure("SubHeader.TLabel", font=("Segoe UI", 11, "bold"))
+    style.configure("TLabel", font=("Segoe UI", 10))
+    style.configure("TEntry", padding=4)
+    style.configure("TButton", padding=(8, 6))
+    style.configure("TCheckbutton", padding=4)
+
+    # Group frames
+    style.configure("Group.TLabelframe", padding=10)
+    style.configure("Group.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
+
+    # Status bar (bigger & bold)
+    style.configure("Status.TLabel", font=("Segoe UI", 12, "bold"))
+    
+    # Treeview styling
+    style.configure("Treeview", font=("Segoe UI", 9))
+    style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+
 
 class TemperatureSubscriber:
     def __init__(self, master):
         self.master = master
         self.master.title("Group 1 - IoT Subscriber Monitor")
-        self.master.geometry("800x600")
+        self.master.geometry("900x700")
         
         self.client = None
         self.connected = False
@@ -52,62 +92,175 @@ class TemperatureSubscriber:
         self.devices_tree = None
         self.log_text = None
         
+        # Connection status variables
+        self.broker_info = StringVar(value=f"Broker: {BROKER}:{PORT}")
+        self.topic_info = StringVar(value=f"Topics: {TOPIC_DATA}, {TOPIC_STATUS}")
+        
+        # Email notification tracking
+        self.last_email_sent = {}  # device_id -> timestamp to prevent spam
+        self.email_cooldown = 300  # 5 minutes between emails for same device/issue
+        
+        setup_style()
         self.setup_ui()
         self.setup_monitoring_timer()
     
+    def send_email_notification(self, subject, message, device_id, alert_type):
+        """Send email notification for critical alerts"""
+        if not EMAIL_CONFIG["enabled"]:
+            return
+            
+        # Check cooldown to prevent spam
+        current_time = time.time()
+        cooldown_key = f"{device_id}_{alert_type}"
+        
+        if cooldown_key in self.last_email_sent:
+            if current_time - self.last_email_sent[cooldown_key] < self.email_cooldown:
+                return  # Still in cooldown period
+        
+        try:
+            # Create message
+            msg = MimeMultipart()
+            msg['From'] = EMAIL_CONFIG["sender_email"]
+            msg['To'] = EMAIL_CONFIG["recipient_email"]
+            msg['Subject'] = f"IoT Alert: {subject}"
+            
+            # Email body
+            body = f"""
+IoT Monitoring System Alert
+
+Device ID: {device_id}
+Alert Type: {alert_type}
+Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Details:
+{message}
+
+This is an automated alert from the IoT Monitoring System.
+Please investigate the issue promptly.
+
+---
+Group 1 IoT Subscriber Monitor
+            """
+            
+            msg.attach(MimeText(body, 'plain'))
+            
+            # Send email
+            server = smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"])
+            server.starttls()
+            server.login(EMAIL_CONFIG["sender_email"], EMAIL_CONFIG["sender_password"])
+            text = msg.as_string()
+            server.sendmail(EMAIL_CONFIG["sender_email"], EMAIL_CONFIG["recipient_email"], text)
+            server.quit()
+            
+            # Update cooldown
+            self.last_email_sent[cooldown_key] = current_time
+            self.log_message(f"📧 Email notification sent for {device_id}: {alert_type}")
+            
+        except Exception as e:
+            self.log_message(f"❌ Failed to send email notification: {e}")
+    
     def setup_ui(self):
-        # Main frame
-        main_frame = Frame(self.master)
-        main_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        # Root container with nice padding and column stretch
+        container = ttk.Frame(self.master, padding=12)
+        container.grid(sticky="nsew")
+        self.master.columnconfigure(0, weight=1)
+        self.master.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+        container.columnconfigure(1, weight=1)
+
+        # Title
+        title = ttk.Label(container, text="Group 1 — IoT Subscriber Monitor", style="Header.TLabel")
+        title.grid(column=0, row=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        # Connection info (compact header row)
+        info = ttk.Frame(container)
+        info.grid(column=0, row=1, columnspan=2, sticky="ew", pady=(0, 10))
+        info.columnconfigure(0, weight=1)
+        info.columnconfigure(1, weight=1)
+
+        ttk.Label(info, textvariable=self.broker_info, style="SubHeader.TLabel").grid(column=0, row=0, sticky="w")
+        ttk.Label(info, textvariable=self.topic_info, style="SubHeader.TLabel").grid(column=1, row=0, sticky="e")
+
+        # --- Left column: Connection Controls ---
+        conn_frame = ttk.LabelFrame(container, text="Connection", style="Group.TLabelframe")
+        conn_frame.grid(column=0, row=2, sticky="nsew", padx=(0, 6))
+        conn_frame.columnconfigure(0, weight=1)
+
+        self.connect_btn = ttk.Button(conn_frame, text="Connect to Broker", command=self.connect_to_broker)
+        self.connect_btn.grid(column=0, row=0, sticky="ew", pady=2)
         
-        # Status frame
-        status_frame = Frame(main_frame)
-        status_frame.pack(fill=X, pady=(0, 10))
+        self.disconnect_btn = ttk.Button(conn_frame, text="Disconnect", command=self.disconnect_from_broker, state=DISABLED)
+        self.disconnect_btn.grid(column=0, row=1, sticky="ew", pady=2)
+
+        # --- Right column: Monitoring Options ---
+        right_col = ttk.Frame(container)
+        right_col.grid(column=1, row=2, sticky="nsew", padx=(6, 0))
+        right_col.columnconfigure(0, weight=1)
+
+        options = ttk.LabelFrame(right_col, text="Monitoring Settings", style="Group.TLabelframe")
+        options.grid(column=0, row=0, sticky="ew")
+        options.columnconfigure(0, weight=1)
+
+        # Monitoring settings info
+        ttk.Label(options, text=f"Data Timeout: {NO_DATA_TIMEOUT}s").grid(column=0, row=0, sticky="w", pady=2)
+        ttk.Label(options, text=f"Normal Range: {NORMAL_TEMP_MIN}°C - {NORMAL_TEMP_MAX}°C").grid(column=0, row=1, sticky="w", pady=2)
+        ttk.Label(options, text="QoS Level: 1").grid(column=0, row=2, sticky="w", pady=2)
         
-        status_label = Label(status_frame, textvariable=self.status_text, font=("Arial", 12, "bold"))
-        status_label.pack(side=LEFT)
-        
-        # Control buttons
-        button_frame = Frame(status_frame)
-        button_frame.pack(side=RIGHT)
-        
-        self.connect_btn = Button(button_frame, text="Connect", command=self.connect_to_broker, 
-                                bg="#4CAF50", fg="white", font=("Arial", 10, "bold"))
-        self.connect_btn.pack(side=LEFT, padx=(0, 5))
-        
-        self.disconnect_btn = Button(button_frame, text="Disconnect", command=self.disconnect_from_broker,
-                                   bg="#f44336", fg="white", font=("Arial", 10, "bold"), state=DISABLED)
-        self.disconnect_btn.pack(side=LEFT)
-        
-        # Device status frame
-        device_frame = LabelFrame(main_frame, text="Device Status", font=("Arial", 11, "bold"))
-        device_frame.pack(fill=BOTH, expand=True, pady=(0, 10))
-        
-        # Device tree view
+        # Email notification status
+        email_status = "Enabled" if EMAIL_CONFIG["enabled"] else "Disabled"
+        ttk.Label(options, text=f"Email Alerts: {email_status}").grid(column=0, row=3, sticky="w", pady=2)
+
+        # --- Device Status Table (full width) ---
+        device_frame = ttk.LabelFrame(container, text="Device Status", style="Group.TLabelframe")
+        device_frame.grid(column=0, row=3, columnspan=2, sticky="nsew", pady=(10, 0))
+        device_frame.columnconfigure(0, weight=1)
+        device_frame.rowconfigure(0, weight=1)
+        container.rowconfigure(3, weight=1)
+
+        # Device tree view with modern styling
         columns = ("Device ID", "Location", "Status", "Last Value", "Last Data", "Alert")
         self.devices_tree = ttk.Treeview(device_frame, columns=columns, show="headings", height=8)
         
         for col in columns:
             self.devices_tree.heading(col, text=col)
             if col == "Alert":
-                self.devices_tree.column(col, width=120)
+                self.devices_tree.column(col, width=140)
             elif col == "Last Data":
-                self.devices_tree.column(col, width=150)
-            else:
                 self.devices_tree.column(col, width=120)
+            elif col == "Device ID":
+                self.devices_tree.column(col, width=100)
+            elif col == "Location":
+                self.devices_tree.column(col, width=140)
+            elif col == "Status":
+                self.devices_tree.column(col, width=90)
+            else:
+                self.devices_tree.column(col, width=100)
         
-        scrollbar_tree = Scrollbar(device_frame, orient=VERTICAL, command=self.devices_tree.yview)
+        scrollbar_tree = ttk.Scrollbar(device_frame, orient=VERTICAL, command=self.devices_tree.yview)
         self.devices_tree.configure(yscrollcommand=scrollbar_tree.set)
         
-        self.devices_tree.pack(side=LEFT, fill=BOTH, expand=True)
-        scrollbar_tree.pack(side=RIGHT, fill=Y)
+        self.devices_tree.grid(column=0, row=0, sticky="nsew", padx=(5, 0), pady=5)
+        scrollbar_tree.grid(column=1, row=0, sticky="ns", pady=5)
+
+        # --- Activity Log (full width) ---
+        log_frame = ttk.LabelFrame(container, text="Activity Log", style="Group.TLabelframe")
+        log_frame.grid(column=0, row=4, columnspan=2, sticky="nsew", pady=(10, 0))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        container.rowconfigure(4, weight=1)
         
-        # Log frame
-        log_frame = LabelFrame(main_frame, text="Activity Log", font=("Arial", 11, "bold"))
-        log_frame.pack(fill=BOTH, expand=True)
-        
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, font=("Consolas", 9))
-        self.log_text.pack(fill=BOTH, expand=True, padx=5, pady=5)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=("Consolas", 9), wrap=WORD)
+        self.log_text.grid(column=0, row=0, sticky="nsew", padx=5, pady=5)
+
+        # --- Status bar ---
+        sep = ttk.Separator(container, orient="horizontal")
+        sep.grid(column=0, row=5, columnspan=2, sticky="ew", pady=(12, 6))
+
+        status_bar = ttk.Frame(container)
+        status_bar.grid(column=0, row=6, columnspan=2, sticky="ew")
+        status_bar.columnconfigure(0, weight=1)
+        self.status_lbl = ttk.Label(status_bar, textvariable=self.status_text, style="Status.TLabel", anchor="w")
+        self.status_lbl.grid(column=0, row=0, sticky="w")
     
     def log_message(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -124,7 +277,7 @@ class TemperatureSubscriber:
     def ui_status(self, text: str):
         try:
             def _set():
-                self.status_text.set(text)
+                self.status_text.set(f"Status: {text}")
             self.master.after(0, _set)
         except Exception:
             pass
@@ -147,10 +300,10 @@ class TemperatureSubscriber:
         try:
             self.client.connect(BROKER, PORT, keepalive=KEEPALIVE)
             self.client.loop_start()
-            self.ui_status("Status: Connecting...")
+            self.ui_status("Connecting...")
             self.log_message("Attempting to connect to broker...")
         except Exception as e:
-            self.ui_status(f"Status: Connect error: {e}")
+            self.ui_status(f"Connect error: {e}")
             self.log_message(f"Connection error: {e}")
     
     def disconnect_from_broker(self):
@@ -163,7 +316,7 @@ class TemperatureSubscriber:
                 pass
         
         self.connected = False
-        self.ui_status("Status: Disconnected")
+        self.ui_status("Disconnected")
         self.log_message("Disconnected from broker")
         
         self.connect_btn.config(state=NORMAL)
@@ -173,7 +326,7 @@ class TemperatureSubscriber:
         if reason_code == 0:
             self.connected = True
             self.running = True
-            self.ui_status("Status: Connected - Monitoring devices")
+            self.ui_status("Connected - Monitoring devices")
             self.log_message("Connected to broker successfully")
             
             # Subscribe to both data and status topics
@@ -186,12 +339,12 @@ class TemperatureSubscriber:
             self.connect_btn.config(state=DISABLED)
             self.disconnect_btn.config(state=NORMAL)
         else:
-            self.ui_status(f"Status: Connect failed ({reason_code})")
+            self.ui_status(f"Connect failed ({reason_code})")
             self.log_message(f"Connection failed with reason code: {reason_code}")
     
     def on_disconnect(self, client, userdata, flags, reason_code, properties=None):
         self.connected = False
-        self.ui_status(f"Status: Disconnected (rc={reason_code})")
+        self.ui_status(f"Disconnected (rc={reason_code})")
         self.log_message(f"Disconnected from broker (reason code: {reason_code})")
         
         self.connect_btn.config(state=NORMAL)
@@ -199,24 +352,64 @@ class TemperatureSubscriber:
     
     def on_message(self, client, userdata, msg):
         try:
-            payload = json.loads(msg.payload.decode())
+            # Enhanced corrupt data handling
+            raw_payload = msg.payload.decode('utf-8', errors='replace')
+            
+            # Check for empty payload
+            if not raw_payload.strip():
+                self.log_message(f"❌ Corrupt data: Empty payload received from topic {msg.topic}")
+                return
+                
+            payload = json.loads(raw_payload)
             topic = msg.topic
+            
+            # Validate payload is a dictionary
+            if not isinstance(payload, dict):
+                self.log_message(f"❌ Corrupt data: Payload is not a JSON object from topic {topic}")
+                return
             
             if topic == TOPIC_DATA:
                 self.handle_data_message(payload)
             elif topic == TOPIC_STATUS:
                 self.handle_status_message(payload)
+            else:
+                self.log_message(f"⚠️ Received message from unknown topic: {topic}")
                 
         except json.JSONDecodeError as e:
-            self.log_message(f"Failed to decode JSON message: {e}")
+            self.log_message(f"❌ Corrupt data: Failed to decode JSON message from topic {msg.topic}: {e}")
+            self.log_message(f"❌ Raw payload: {repr(msg.payload)}")
+        except UnicodeDecodeError as e:
+            self.log_message(f"❌ Corrupt data: Failed to decode message payload as UTF-8: {e}")
         except Exception as e:
-            self.log_message(f"Error processing message: {e}")
+            self.log_message(f"❌ Unexpected error processing message from topic {msg.topic}: {e}")
     
     def handle_data_message(self, data):
-        device_id = data.get("device_id", "unknown")
+        # Enhanced validation for required fields
+        device_id = data.get("device_id")
+        if not device_id:
+            self.log_message("❌ Corrupt data: Missing device_id field")
+            return
+            
         location = data.get("location", "unknown")
         sensor_data = data.get("sensor_data", {})
-        value = sensor_data.get("value", 0)
+        
+        # Validate sensor_data structure
+        if not isinstance(sensor_data, dict):
+            self.log_message(f"❌ Corrupt data from {device_id}: sensor_data is not a dictionary")
+            return
+            
+        value = sensor_data.get("value")
+        if value is None:
+            self.log_message(f"❌ Corrupt data from {device_id}: Missing temperature value")
+            return
+            
+        # Validate value is numeric
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            self.log_message(f"❌ Corrupt data from {device_id}: Invalid temperature value '{value}'")
+            return
+            
         timestamp = data.get("timestamp", time.time())
         
         # Update device state
@@ -236,21 +429,50 @@ class TemperatureSubscriber:
                 "alert": ""  # Clear alert when data is received
             })
         
-        # Check for out-of-range data
+        # Enhanced wild data detection - check for out-of-range data
         alert = ""
         if not (NORMAL_TEMP_MIN <= value <= NORMAL_TEMP_MAX):
-            alert = "OUT OF RANGE"
-            self.log_message(f"🚨 {device_id}: Temperature {value}°C is out of normal range ({NORMAL_TEMP_MIN}-{NORMAL_TEMP_MAX}°C)")
+            alert = "WILD DATA"
+            if value < NORMAL_TEMP_MIN:
+                message = f"Temperature {value}°C is below normal range (min: {NORMAL_TEMP_MIN}°C)"
+                self.log_message(f"🚨 {device_id}: WILD DATA - {message}")
+                self.send_email_notification(f"Wild Data Alert - {device_id}", message, device_id, "WILD_DATA")
+            else:
+                message = f"Temperature {value}°C is above normal range (max: {NORMAL_TEMP_MAX}°C)"
+                self.log_message(f"🚨 {device_id}: WILD DATA - {message}")
+                self.send_email_notification(f"Wild Data Alert - {device_id}", message, device_id, "WILD_DATA")
+        
+        # Additional wild data checks for extreme values
+        if value < -50 or value > 100:
+            alert = "EXTREME WILD DATA"
+            message = f"Temperature {value}°C is physically impossible for room sensors"
+            self.log_message(f"🚨 {device_id}: EXTREME WILD DATA - {message}")
+            self.send_email_notification(f"Extreme Wild Data Alert - {device_id}", message, device_id, "EXTREME_WILD_DATA")
         
         self.device_states[device_id]["alert"] = alert
         
-        self.log_message(f"📊 Data from {device_id} ({location}): {value}°C")
+        # Enhanced normal data logging with more details
+        if not alert:
+            self.log_message(f"📊 Normal data from {device_id} ({location}): {value}°C - Within range [{NORMAL_TEMP_MIN}-{NORMAL_TEMP_MAX}°C]")
+        else:
+            self.log_message(f"📊 Data from {device_id} ({location}): {value}°C - FLAGGED: {alert}")
         self.update_device_display()
     
     def handle_status_message(self, status_data):
-        device_id = status_data.get("device_id", "unknown")
+        # Enhanced validation for status messages
+        device_id = status_data.get("device_id")
+        if not device_id:
+            self.log_message("❌ Corrupt status message: Missing device_id field")
+            return
+            
         location = status_data.get("location", "unknown")
         status = status_data.get("status", "UNKNOWN")
+        
+        # Validate status value
+        valid_statuses = ["ONLINE", "OFFLINE", "CONNECTING", "DISCONNECTING"]
+        if status not in valid_statuses:
+            self.log_message(f"⚠️ {device_id}: Unknown status '{status}', treating as UNKNOWN")
+            status = "UNKNOWN"
         
         # Initialize device state if not exists
         if device_id not in self.device_states:
@@ -262,15 +484,34 @@ class TemperatureSubscriber:
                 "alert": ""
             }
         else:
+            # Update existing device state
+            old_status = self.device_states[device_id]["status"]
             self.device_states[device_id]["status"] = status
             self.device_states[device_id]["location"] = location
+            
+            # Log status transitions
+            if old_status != status:
+                self.log_message(f"🔄 {device_id}: Status changed from {old_status} to {status}")
         
+        # Enhanced network drop detection with LWT handling
         if status == "OFFLINE":
             self.device_states[device_id]["alert"] = "NETWORK DROP"
-            self.log_message(f"🔴 {device_id}: Device went OFFLINE (Network Drop/LWT)")
+            message = "Device went OFFLINE - Network Drop detected (likely from LWT - Last Will Testament). This indicates the device lost connection unexpectedly."
+            self.log_message(f"🔴 {device_id}: Device went OFFLINE - Network Drop detected (likely from LWT - Last Will Testament)")
+            self.log_message(f"🔴 {device_id}: This indicates the device lost connection unexpectedly")
+            self.send_email_notification(f"Network Drop Alert - {device_id}", message, device_id, "NETWORK_DROP")
         elif status == "ONLINE":
+            # Clear alerts when device comes back online
+            old_alert = self.device_states[device_id]["alert"]
             self.device_states[device_id]["alert"] = ""
-            self.log_message(f"🟢 {device_id}: Device is ONLINE")
+            if old_alert == "NETWORK DROP":
+                self.log_message(f"🟢 {device_id}: Device recovered from NETWORK DROP - Now ONLINE")
+            else:
+                self.log_message(f"🟢 {device_id}: Device is ONLINE")
+        elif status == "CONNECTING":
+            self.log_message(f"🟡 {device_id}: Device is attempting to connect")
+        elif status == "DISCONNECTING":
+            self.log_message(f"🟡 {device_id}: Device is disconnecting gracefully")
         
         self.update_device_display()
     
@@ -282,14 +523,32 @@ class TemperatureSubscriber:
             current_time = time.time()
             
             for device_id, state in self.device_states.items():
+                # Enhanced no data feed detection
                 if state["status"] == "ONLINE" and state["last_data_time"]:
                     time_since_last_data = current_time - state["last_data_time"]
                     
                     if time_since_last_data > NO_DATA_TIMEOUT:
                         if state["alert"] != "NO DATA FEED":
                             state["alert"] = "NO DATA FEED"
-                            self.log_message(f"⚠️ {device_id}: No data feed detected (no data for {int(time_since_last_data)}s)")
+                            message = f"Publisher connected but stopped sending data ({int(time_since_last_data)}s since last data)"
+                            self.log_message(f"⚠️ {device_id}: No data feed detected - {message}")
+                            self.send_email_notification(f"No Data Feed Alert - {device_id}", message, device_id, "NO_DATA_FEED")
                             self.update_device_display()
+                    elif state["alert"] == "NO DATA FEED" and time_since_last_data <= NO_DATA_TIMEOUT:
+                        # Clear no data feed alert if data resumes
+                        state["alert"] = ""
+                        self.log_message(f"✅ {device_id}: Data feed resumed after {int(time_since_last_data)}s")
+                        self.update_device_display()
+                
+                # Check for devices that are ONLINE but never sent data
+                elif state["status"] == "ONLINE" and state["last_data_time"] is None:
+                    # Device is online but has never sent data - this could indicate a problem
+                    if state["alert"] != "NO DATA FEED":
+                        state["alert"] = "NO DATA FEED"
+                        message = "Device is ONLINE but has never sent data"
+                        self.log_message(f"⚠️ {device_id}: {message}")
+                        self.send_email_notification(f"No Data Alert - {device_id}", message, device_id, "NO_DATA_FEED")
+                        self.update_device_display()
             
             # Schedule next check
             if self.running:
@@ -332,11 +591,15 @@ class TemperatureSubscriber:
                         device_id, location, status, value_str, last_data_str, alert
                     ))
                     
-                    # Color coding for alerts
+                    # Enhanced color coding for alerts
                     if alert == "NETWORK DROP":
                         self.devices_tree.set(item, "Alert", "🔴 NETWORK DROP")
                     elif alert == "NO DATA FEED":
                         self.devices_tree.set(item, "Alert", "⚠️ NO DATA FEED")
+                    elif alert == "WILD DATA":
+                        self.devices_tree.set(item, "Alert", "🚨 WILD DATA")
+                    elif alert == "EXTREME WILD DATA":
+                        self.devices_tree.set(item, "Alert", "🔥 EXTREME WILD")
                     elif alert == "OUT OF RANGE":
                         self.devices_tree.set(item, "Alert", "🚨 OUT OF RANGE")
                     elif status == "ONLINE" and not alert:
