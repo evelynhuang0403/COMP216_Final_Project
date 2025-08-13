@@ -15,5 +15,16 @@
     "dev001": "Library",
     "dev002": "Engineering Lab",
     "dev003": "Student Cafeteria"
+  },
+  "alerts": {
+    "service": "smtp",
+      "smtp": {
+        "server": "smtp.sendgrid.net",           
+        "port": 587,
+        "username": "apikey",  
+        "password": "${SENDGRID_API_KEY}",
+        "sender": "grouproject216@gmail.com",
+        "receivers": ["grouproject216@gmail.com"]
+      }
   }
 }

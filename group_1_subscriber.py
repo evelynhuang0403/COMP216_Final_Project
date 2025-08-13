@@ -9,7 +9,7 @@ from tkinter import Tk, Frame, Label, Button, StringVar, BooleanVar, BOTH, X, Y,
 from tkinter import ttk, scrolledtext
 import paho.mqtt.client as mqtt
 from typing import Optional, Dict, Any
-
+from group_1_alert_manager import AlertManager
 
 def load_config(path="group_1_config.json"):
     try:
@@ -77,6 +77,7 @@ def setup_style():
 class TemperatureSubscriber:
     def __init__(self, master):
         self.master = master
+        self.alert_manager = AlertManager()
         self.master.title("Group 1 - IoT Subscriber Monitor")
         self.master.geometry("900x700")
         
@@ -441,23 +442,19 @@ Group 1 IoT Subscriber Monitor
         # Enhanced wild data detection - check for out-of-range data
         alert = ""
         if not (NORMAL_TEMP_MIN <= value <= NORMAL_TEMP_MAX):
-            alert = "WILD DATA"
+            self.alert_manager.send_alert(device_id, location, value, "WILD_DATA")
             if value < NORMAL_TEMP_MIN:
                 message = f"Temperature {value}°C is below normal range (min: {NORMAL_TEMP_MIN}°C)"
                 self.log_message(f"🚨 {device_id}: WILD DATA - {message}")
-                self.send_email_notification(f"Wild Data Alert - {device_id}", message, device_id, "WILD_DATA")
             else:
                 message = f"Temperature {value}°C is above normal range (max: {NORMAL_TEMP_MAX}°C)"
                 self.log_message(f"🚨 {device_id}: WILD DATA - {message}")
-                self.send_email_notification(f"Wild Data Alert - {device_id}", message, device_id, "WILD_DATA")
         
         # Additional wild data checks for extreme values
         if value < -50 or value > 100:
-            alert = "EXTREME WILD DATA"
+            self.alert_manager.send_alert(device_id, location, value, "EXTREME_WILD_DATA")
             message = f"Temperature {value}°C is physically impossible for room sensors"
             self.log_message(f"🚨 {device_id}: EXTREME WILD DATA - {message}")
-            self.send_email_notification(f"Extreme Wild Data Alert - {device_id}", message, device_id, "EXTREME_WILD_DATA")
-        
         self.device_states[device_id]["alert"] = alert
         
         # Enhanced normal data logging with more details
@@ -504,11 +501,10 @@ Group 1 IoT Subscriber Monitor
         
         # Enhanced network drop detection with LWT handling
         if status == "OFFLINE":
-            self.device_states[device_id]["alert"] = "NETWORK DROP"
+            self.alert_manager.send_alert(device_id, location, "N/A", "NETWORK_DROP")
             message = "Device went OFFLINE - Network Drop detected (likely from LWT - Last Will Testament). This indicates the device lost connection unexpectedly."
             self.log_message(f"🔴 {device_id}: Device went OFFLINE - Network Drop detected (likely from LWT - Last Will Testament)")
             self.log_message(f"🔴 {device_id}: This indicates the device lost connection unexpectedly")
-            self.send_email_notification(f"Network Drop Alert - {device_id}", message, device_id, "NETWORK_DROP")
         elif status == "ONLINE":
             # Clear alerts when device comes back online
             old_alert = self.device_states[device_id]["alert"]
