@@ -3,8 +3,10 @@ import json
 import time
 import threading
 import random
-from tkinter import *
+from tkinter import Tk, Frame, Label, Button, StringVar, BooleanVar, DoubleVar, BOTH, X, Y, LEFT, RIGHT, END, DISABLED, NORMAL
+from tkinter import ttk
 from random import random as rand01
+from typing import Optional
 
 import paho.mqtt.client as mqtt
 
@@ -71,7 +73,7 @@ class TemperaturePublisher:
         self.packager = MessagePackager(self.device_id, self.location)
 
         # MQTT state
-        self.client = None
+        self.client: Optional[mqtt.Client] = None
         self.connected = False
         self.reconnecting = False
         self.running = False
@@ -113,11 +115,19 @@ class TemperaturePublisher:
     # ----------------------- MQTT setup & callbacks ---------------------
     # create and configure MQTT client
     def setup_client(self):
-        self.client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2,
-            client_id=f"group1_pub_{self.device_id}",
-            protocol=mqtt.MQTTv5
-        )
+        try:
+            # Try VERSION2 (newer paho-mqtt)
+            self.client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2,
+                client_id=f"group1_pub_{self.device_id}",
+                protocol=mqtt.MQTTv5
+            )
+        except AttributeError:
+            # Fallback for older paho-mqtt versions
+            self.client = mqtt.Client(
+                client_id=f"group1_pub_{self.device_id}",
+                protocol=mqtt.MQTTv5
+            )
 
         # LWT message when the client disconnects unexpectedly (e.g., network loss, crash).
         lwt_payload = json.dumps({
