@@ -3,7 +3,7 @@ import json
 import time
 import threading
 import random
-from tkinter import Tk, Frame, Label, Button, StringVar, BooleanVar, DoubleVar, BOTH, X, Y, LEFT, RIGHT, END, DISABLED, NORMAL
+from tkinter import Tk, StringVar, END, DISABLED, NORMAL
 from tkinter import ttk
 from random import random as rand01
 from typing import Optional
@@ -113,7 +113,6 @@ class TemperaturePublisher:
             pass
 
     # ----------------------- MQTT setup & callbacks ---------------------
-    # create and configure MQTT client
     def setup_client(self):
         try:
             # Try VERSION2 (newer paho-mqtt)
@@ -129,7 +128,7 @@ class TemperaturePublisher:
                 protocol=mqtt.MQTTv5
             )
 
-        # LWT message when the client disconnects unexpectedly (e.g., network loss, crash).
+        # LWT: unexpected disconnect => OFFLINE
         lwt_payload = json.dumps({
             "device_id": self.device_id,
             "location": self.location,
@@ -139,6 +138,20 @@ class TemperaturePublisher:
 
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
+
+    # ---- helper to publish status (ONLINE / OFFLINE / STOPPED) ----
+    def publish_status(self, status: str):
+        try:
+            if self.client:
+                payload = json.dumps({
+                    "device_id": self.device_id,
+                    "location": self.location,
+                    "status": status
+                })
+                # retain so subscribers always see the latest state
+                self.client.publish(TOPIC_STATUS, payload, qos=1, retain=True)
+        except Exception as e:
+            print(f"[{self.device_id}] Failed to publish status '{status}': {e}")
 
     # connect to broker
     def connect_to_broker(self):
@@ -155,7 +168,6 @@ class TemperaturePublisher:
 
     # MQTT on_connect callback
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
-        # Determine if connection was successful
         ok = (reason_code == 0)
         self.connected = ok
 
@@ -168,7 +180,7 @@ class TemperaturePublisher:
             self.drop_btn.config(state=NORMAL)
             self.reconnect_btn.config(state=DISABLED)
 
-            # Show appropriate UI status based on reconnect state
+            # UI
             if self.reconnecting and not self.manual_offline:
                 self.ui_status("Status: Reconnected to broker")
             else:
@@ -177,15 +189,9 @@ class TemperaturePublisher:
             print(f"[{self.device_id}] Connected: reason_code={reason_code}")
             self.reconnecting = False
 
-            # Publish ONLINE status message to status topic
-            online_payload = json.dumps({
-                "device_id": self.device_id,
-                "location": self.location,
-                "status": "ONLINE"
-            })
-            self.client.publish(TOPIC_STATUS, online_payload, qos=1, retain=True)
+            # ONLINE status (retained)
+            self.publish_status("ONLINE")
         else:
-            # If connection failed, update UI and log
             self.ui_status(f"Status: Connect failed ({reason_code})")
             print(f"[{self.device_id}] Connect failed: reason_code={reason_code}")
 
@@ -195,7 +201,6 @@ class TemperaturePublisher:
         self.ui_status(f"Status: Disconnected (rc={reason_code})")
         print(f"[{self.device_id}] Disconnected: rc={reason_code}")
 
-        # If user went offline manually, stop reconnect attempts
         if self.manual_offline:
             self.reconnecting = False
             self.reconnect_btn.config(state=NORMAL)
@@ -203,7 +208,6 @@ class TemperaturePublisher:
 
         self.reconnecting = True
 
-        # If publisher is running and auto_reconnect is enabled, try again after delay
         if self.running and self.auto_reconnect:
             delay = min(30, 2 ** self._retries)
             self._retries += 1
@@ -213,7 +217,6 @@ class TemperaturePublisher:
             t.start()
 
     # ------------------------ Start/Stop -------------------------
-    # start publishing loop
     def start_publishing(self):
         if not self.connected and not self.manual_offline:
             self.connect_to_broker()
@@ -236,33 +239,33 @@ class TemperaturePublisher:
         self.start_btn.config(state=DISABLED)
         self.stop_btn.config(state=NORMAL)
 
+        # clear any previous STOPPED state for subscribers
+        self.publish_status("ONLINE")
+
         thread = threading.Thread(target=self.publish_loop, daemon=True)
         thread.start()
 
-    # stop publishing loop
     def stop_publishing(self):
         self.running = False
         self.start_btn.config(state=NORMAL)
         self.stop_btn.config(state=DISABLED)
         self.ui_status("Status: Stopped")
 
+        # announce STOPPED while staying connected
+        self.publish_status("STOPPED")
+
     # ----------------------- Publish loop with blackout bursts -----------------------
-    # main loop: send messages, handle misses and blackouts
     def publish_loop(self):
         while self.running:
-            # keep a steady cadence
             time.sleep(PUBLISH_INTERVAL)
 
-            # maintenance mode: pause everything
             if self.block_publishing:
                 continue
 
-            # not connected: keep thread alive but don't generate/publish
             if not self.connected:
                 print(f"[{self.device_id}] Not connected, skipping this cycle.")
                 continue
 
-            # blackout active: skip N cycles, then resume
             if self.blackout_active:
                 self.blackout_remaining -= 1
                 print(f"[{self.device_id}] Blackout… {self.blackout_remaining} sends left to skip.")
@@ -271,22 +274,18 @@ class TemperaturePublisher:
                     print(f"[{self.device_id}] Blackout ended.")
                 continue
 
-            # ~1-in-100 single-message miss (non-deterministic)
             if rand01() < self.miss_rate:
                 print(f"[{self.device_id}] Simulated: skipping this single transmission.")
                 continue
 
-            # skip blocks of transmission occasionally (2%)
             if rand01() < self.blackout_chance and not self.blackout_active:
                 self.start_blackout()
-                continue  # start immediately
+                continue
 
-            # generate a value and publish
             value = self.generator.get_value()
             payload = self.packager.package(value)
             info = self.client.publish(TOPIC_DATA, payload, qos=QOS)
 
-            # wait briefly for QoS1 to know if it actually went out
             if info.rc == mqtt.MQTT_ERR_SUCCESS:
                 info.wait_for_publish(timeout=3)
                 if info.is_published():
@@ -296,29 +295,21 @@ class TemperaturePublisher:
             else:
                 print(f"[{self.device_id}] Publish failed with rc={info.rc}")
 
-    # helper function to trigger blackout mode
     def start_blackout(self):
         self.blackout_active = True
         self.blackout_remaining = random.randint(self.blackout_min, self.blackout_max)
         print(f"[{self.device_id}] Starting blackout for {self.blackout_remaining} sends.")
 
-
     # ---------------------- Maintenance mode --------------------
-    # go offline manually (no auto-reconnect)
     def go_offline(self):
         self.block_publishing = True
         self.manual_offline = True
         self.reconnecting = False
         self.ui_status("Status: OFFLINE (manual) — no auto-reconnect")
 
-        offline_payload = json.dumps({
-            "device_id": self.device_id,
-            "location": self.location,
-            "status": "OFFLINE"
-        })
         try:
             if self.client:
-                self.client.publish(TOPIC_STATUS, offline_payload, qos=1, retain=True)
+                self.publish_status("OFFLINE")
                 self.client.disconnect()
         except Exception as e:
             print(f"[{self.device_id}] Offline publish/disconnect error: {e}")
@@ -327,7 +318,6 @@ class TemperaturePublisher:
         self.drop_btn.config(state=DISABLED)
         self.reconnect_btn.config(state=NORMAL)
 
-    # go back online after manual offline
     def go_online(self):
         self.ui_status("Status: Reconnecting…")
         self.manual_offline = False
@@ -340,7 +330,6 @@ class TemperaturePublisher:
             print(f"[{self.device_id}] Reconnect error: {e}")
             self.ui_status(f"Status: Reconnect failed: {e}")
 
-    # retry reconnect after disconnect (e.g. when network drop)
     def _try_reconnect(self):
         if self.manual_offline:
             return
@@ -362,29 +351,19 @@ class TemperaturePublisher:
                 t.start()
 
     # ----------------------- Cleanup -----------------------
-    # clean shutdown
     def on_closing(self):
         self.stop_publishing()
         try:
             if self.client and self.connected:
-                offline_payload = json.dumps({
-                    "device_id": self.device_id,
-                    "location": self.location,
-                    "status": "OFFLINE"
-                })
-                self.client.publish(TOPIC_STATUS, offline_payload, qos=1, retain=True)
+                self.publish_status("OFFLINE")
         except Exception:
             pass
 
         if self.client:
-            try:
-                self.client.loop_stop()
-            except Exception:
-                pass
-            try:
-                self.client.disconnect()
-            except Exception:
-                pass
+            try: self.client.loop_stop()
+            except Exception: pass
+            try: self.client.disconnect()
+            except Exception: pass
 
         self.master.destroy()
 

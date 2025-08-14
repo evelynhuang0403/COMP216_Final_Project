@@ -8,8 +8,8 @@
   },
   "publish": {
     "interval": 2,
-    "miss_rate": 0.02,
-    "blackout": { "chance": 0.02, "min": 3, "max": 8 }
+    "miss_rate": 0.01,
+    "blackout": { "chance": 0.01, "min": 5, "max": 8 }
   },
   "devices": {
     "dev001": "Library",
