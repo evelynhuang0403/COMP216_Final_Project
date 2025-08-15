@@ -4,7 +4,12 @@
     "port": 1883,
     "keepalive": 15,
     "qos": 1,
-    "topics": { "data": "group_1/temp", "status": "group_1/status" }
+    "version": 5,
+    "topics": {
+      "data": "group_1/temp",
+      "status": "group_1/status",
+      "control": "group_1/control"
+    }
   },
   "publish": {
     "interval": 2,
@@ -16,15 +21,27 @@
     "dev002": "Engineering Lab",
     "dev003": "Student Cafeteria"
   },
+  "subscriber": {
+    "allowed_temp_min": 0,
+    "allowed_temp_max": 50
+  },
+  "history": {
+    "retention_days": 30
+  },
+  "admin": {
+    "db_path": "group_1_admin.db",
+    "host": "127.0.0.1",
+    "port": 5050
+  },
   "alerts": {
     "service": "smtp",
-      "smtp": {
-        "server": "smtp.sendgrid.net",           
-        "port": 587,
-        "username": "apikey",  
-        "password": "${SENDGRID_API_KEY}",
-        "sender": "grouproject216@gmail.com",
-        "receivers": ["grouproject216@gmail.com"]
-      }
+    "smtp": {
+      "server": "smtp.sendgrid.net",
+      "port": 587,
+      "username": "apikey",
+      "password": "${SENDGRID_API_KEY}",
+      "sender": "grouproject216@gmail.com",
+      "receivers": ["grouproject216@gmail.com"]
+    }
   }
 }
