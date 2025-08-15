@@ -1,0 +1,399 @@
+#Syed
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Group 1 – Admin Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0;background:#fafafa;color:#222}
+    header{padding:14px 18px;background:#0f172a;color:#fff}
+    h1{margin:0;font-size:20px}
+    main{padding:16px;display:grid;gap:12px;grid-template-columns:1fr 1fr}
+    section{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px}
+    h2{margin:0 0 8px 0;font-size:16px}
+    label{display:block;margin:4px 0 2px}
+    input,select,button,textarea{font:inherit;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px}
+    button{cursor:pointer}
+    pre{white-space:pre-wrap;background:#0b1020;color:#d1e8ff;padding:8px;border-radius:8px;max-height:240px;overflow:auto}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #eee;text-align:left;padding:6px}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    canvas{border:1px solid #eee;border-radius:8px}
+    .muted{color:#64748b;font-size:12px}
+    .chart-container {
+        position: relative;
+        height: 400px;
+        margin-bottom: 20px;
+    }
+    .chart-error {
+        color: #e53e3e;
+        font-weight: bold;
+        margin-top: 10px;
+    }
+    @media (max-width:900px){ main{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+<header><h1>Group 1 – IoT Admin Console</h1></header>
+
+<main>
+  <section>
+    <h2>Devices</h2>
+    <div class="row"><button onclick="loadDevices()">Refresh</button></div>
+    <table><thead><tr><th>Device</th><th>Location</th><th>Status</th><th>Last</th></tr></thead>
+      <tbody id="dev_tbody"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Immediate Control</h2>
+    <div class="row">
+      <input id="ctl_dev" placeholder="device_id (e.g., dev001)"/>
+      <select id="ctl_action">
+        <option value="pause">pause</option>
+        <option value="resume">resume</option>
+        <option value="shutdown">shutdown</option>
+        <option value="reconfig">reconfig</option>
+      </select>
+      <input id="ctl_version" type="number" min="3" max="5" step="2" placeholder="version (3|5)"/>
+      <input id="ctl_qos" type="number" min="0" max="2" placeholder="qos (0|1|2)"/>
+      <button onclick="sendControl()">Send</button>
+    </div>
+    <div class="muted">Reconfig only uses version/qos.</div>
+  </section>
+
+  <section>
+    <h2>Historical Search</h2>
+    <div class="row">
+      <input id="q_device" placeholder="device_id (optional)"/>
+      <input id="q_since" type="number" placeholder="since (sec ago)"/>
+      <input id="q_until" type="number" placeholder="until (sec ago)"/>
+      <input id="q_limit" type="number" value="200" min="10" max="1000" />
+      <button onclick="runQuery()">Query</button>
+    </div>
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+        <div id="chart-error" class="chart-error"></div>
+    </div>
+    <pre id="query_out"></pre>
+  </section>
+
+  <section>
+    <h2>Anomalies & Stats</h2>
+    <div class="row">
+      <button onclick="loadAnomalies()">Last 10 Anomalies</button>
+      <a id="dl_csv" href="/api/anomalies.csv?limit=10" target="_blank">
+        <button>Download CSV</button>
+      </a>
+    </div>
+    <pre id="anom_out"></pre>
+    <div class="row" style="margin-top:6px">
+      <input id="st_device" placeholder="device_id (optional)"/>
+      <input id="st_since" type="number" placeholder="since (sec ago)"/>
+      <input id="st_until" type="number" placeholder="until (sec ago)"/>
+      <button onclick="loadStats()">Aggregate Stats</button>
+    </div>
+    <pre id="stats_out"></pre>
+  </section>
+
+  <section>
+    <h2>Schedules</h2>
+    <div class="row">
+      <input id="sc_device" placeholder="device_id"/>
+      <select id="sc_action">
+        <option value="pause">pause</option>
+        <option value="resume">resume</option>
+        <option value="shutdown">shutdown</option>
+      </select>
+      <input id="sc_start_in" type="number" placeholder="start in (sec)"/>
+      <input id="sc_duration" type="number" placeholder="duration (sec)"/>
+      <button onclick="addSchedule()">Schedule</button>
+      <button onclick="fetchSchedules()">Refresh</button>
+    </div>
+    <pre id="sched_out"></pre>
+  </section>
+
+  <section>
+    <h2>Dynamic MQTT (Admin Bridge)</h2>
+    <div class="row">
+      <input id="mq_version" type="number" min="3" max="5" step="2" placeholder="version (3|5)"/>
+      <input id="mq_qos" type="number" min="0" max="2" placeholder="qos (0|1|2)"/>
+      <button onclick="applyMQTT()">Apply</button>
+    </div>
+    <pre id="mqtt_out"></pre>
+  </section>
+
+  <section>
+    <h2>Service Log (QoS / Schema)</h2>
+    <div class="row"><button onclick="loadService()">Refresh</button></div>
+    <pre id="svc_out"></pre>
+  </section>
+</main>
+
+<script>
+//  chart reference
+let historyChart = null;
+
+async function getJSON(url, opts){ 
+    const r = await fetch(url, opts); 
+    if(!r.ok) throw new Error(await r.text()); 
+    return r.json(); 
+}
+
+async function loadDevices(){
+  try {
+    const rows = await getJSON('/api/devices');
+    const tb = document.getElementById('dev_tbody'); 
+    tb.innerHTML='';
+    for(const r of rows){
+      const tr = document.createElement('tr');
+      const lastUpdated = r.last_updated ? new Date(r.last_updated * 1000).toLocaleString() : 'N/A';
+      tr.innerHTML = `<td>${r.device_id||''}</td><td>${r.location||''}</td><td>${r.status||''}</td><td>${lastUpdated}</td>`;
+      tb.appendChild(tr);
+    }
+  } catch (e) {
+    console.error('Error loading devices:', e);
+    alert('Error loading devices: ' + e.message);
+  }
+}
+
+async function sendControl(){
+  try {
+    const device_id = document.getElementById('ctl_dev').value.trim();
+    const action = document.getElementById('ctl_action').value;
+    const version = parseInt(document.getElementById('ctl_version').value);
+    const qos = parseInt(document.getElementById('ctl_qos').value);
+    
+    if(!device_id) {
+      alert('Please enter a device ID');
+      return;
+    }
+    
+    const body = { device_id, action };
+    if(action === 'reconfig'){
+      if(!Number.isNaN(version)) body.version = version;
+      if(!Number.isNaN(qos)) body.qos = qos;
+    }
+    
+    await getJSON('/api/control', { 
+      method: 'POST', 
+      headers: {'Content-Type': 'application/json'}, 
+      body: JSON.stringify(body)
+    });
+    
+    alert('Command sent successfully!');
+    loadDevices(); // Refresh device list
+  } catch (e) {
+    console.error('Error sending control:', e);
+    alert('Error sending control: ' + e.message);
+  }
+}
+
+async function runQuery(){
+  try {
+    const dev = document.getElementById('q_device').value.trim();
+    const since = parseFloat(document.getElementById('q_since').value || '');
+    const until = parseFloat(document.getElementById('q_until').value || '');
+    const limit = parseInt(document.getElementById('q_limit').value || '200');
+    
+    const now = Math.floor(Date.now() / 1000);
+    const qs = new URLSearchParams();
+    
+    if(dev) qs.set('device_id', dev);
+    if(!Number.isNaN(since)) qs.set('since', now - since);
+    if(!Number.isNaN(until)) qs.set('until', now - until);
+    qs.set('limit', String(limit));
+    
+    const data = await getJSON('/api/messages?' + qs.toString());
+    
+    // Clear previous error
+    document.getElementById('chart-error').textContent = '';
+    
+    if (data.length === 0) {
+        document.getElementById('query_out').textContent = "No historical data found";
+        if(historyChart) historyChart.destroy();
+        historyChart = null;
+        return;
+    }
+    
+    document.getElementById('query_out').textContent = JSON.stringify(data, null, 2);
+    
+    // Prepare data for chart
+    const sortedData = [...data].sort((a, b) => a.ts - b.ts);
+    const labels = sortedData.map(d => 
+        new Date(d.ts * 1000).toLocaleTimeString()
+    );
+    const temps = sortedData.map(d => d.core_temp);
+
+    // Check if we have at least 2 valid data points
+    const validTemps = temps.filter(temp => temp !== null);
+    if (validTemps.length < 2) {
+        document.getElementById('chart-error').textContent = 
+            `Not enough data points (${validTemps.length} valid points found). Need at least 2 points to draw a graph.`;
+        if(historyChart) historyChart.destroy();
+        historyChart = null;
+        return;
+    }
+
+    const ctx = document.getElementById('chart').getContext('2d');
+    
+    // Destroy previous chart if exists
+    if(historyChart) historyChart.destroy();
+    
+    historyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Temperature (°C)',
+                data: temps,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    suggestedMin: 15,
+                    suggestedMax: 35
+                }
+            }
+        }
+    });
+    
+  } catch (e) {
+    console.error('Error running query:', e);
+    document.getElementById('chart-error').textContent = 'Error loading data: ' + e.message;
+    alert('Error running query: ' + e.message);
+  }
+}
+
+async function loadAnomalies(){
+  try {
+    const data = await getJSON('/api/anomalies?limit=10');
+    
+    if (data.length === 0) {
+        document.getElementById('anom_out').textContent = "No anomalies detected";
+    } else {
+        document.getElementById('anom_out').textContent = JSON.stringify(data, null, 2);
+    }
+  } catch (e) {
+    console.error('Error loading anomalies:', e);
+    alert('Error loading anomalies: ' + e.message);
+  }
+}
+
+async function loadStats(){
+  try {
+    const dev = document.getElementById('st_device').value.trim();
+    const since = parseFloat(document.getElementById('st_since').value || '');
+    const until = parseFloat(document.getElementById('st_until').value || '');
+    
+    const now = Math.floor(Date.now() / 1000);
+    const qs = new URLSearchParams();
+    
+    if(dev) qs.set('device_id', dev);
+    if(!Number.isNaN(since)) qs.set('since', now - since);
+    if(!Number.isNaN(until)) qs.set('until', now - until);
+    
+    const data = await getJSON('/api/stats?' + qs.toString());
+    document.getElementById('stats_out').textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    console.error('Error loading stats:', e);
+    alert('Error loading stats: ' + e.message);
+  }
+}
+
+async function addSchedule(){
+  try {
+    const dev = document.getElementById('sc_device').value.trim();
+    const action = document.getElementById('sc_action').value;
+    const startIn = parseFloat(document.getElementById('sc_start_in').value || '0');
+    const duration = parseFloat(document.getElementById('sc_duration').value || '60');
+    
+    if(!dev) {
+      alert('Please enter a device ID');
+      return;
+    }
+    
+    const body = { 
+      device_id: dev, 
+      action, 
+      start_in: startIn,
+      duration
+    };
+    
+    await getJSON('/api/schedule', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    
+    alert('Schedule added successfully!');
+    fetchSchedules();
+  } catch (e) {
+    console.error('Error adding schedule:', e);
+    alert('Error adding schedule: ' + e.message);
+  }
+}
+
+async function fetchSchedules(){
+  try {
+    const data = await getJSON('/api/schedule');
+    document.getElementById('sched_out').textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    console.error('Error fetching schedules:', e);
+    alert('Error fetching schedules: ' + e.message);
+  }
+}
+
+async function applyMQTT(){
+  try {
+    const version = parseInt(document.getElementById('mq_version').value);
+    const qos = parseInt(document.getElementById('mq_qos').value);
+    
+    if(Number.isNaN(version) || Number.isNaN(qos)) {
+      alert('Please enter valid version and QoS values');
+      return;
+    }
+    
+    const res = await getJSON('/api/mqttconfig', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({version, qos})
+    });
+    
+    document.getElementById('mqtt_out').textContent = JSON.stringify(res, null, 2);
+    alert('MQTT configuration updated successfully!');
+  } catch (e) {
+    console.error('Error applying MQTT config:', e);
+    alert('Error applying MQTT config: ' + e.message);
+  }
+}
+
+async function loadService(){
+  try {
+    const data = await getJSON('/api/service_logs?limit=30');
+    document.getElementById('svc_out').textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    console.error('Error loading service logs:', e);
+    alert('Error loading service logs: ' + e.message);
+  }
+}
+
+// Initial load when page is ready
+document.addEventListener('DOMContentLoaded', () => {
+  loadDevices();
+  loadService();
+  fetchSchedules();
+});
+</script>
+</body>
+</html>
